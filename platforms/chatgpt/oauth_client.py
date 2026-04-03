@@ -734,6 +734,12 @@ class OAuthClient:
     ):
         """在 OAuth 登录态命中 about_you 后提交资料，完成账户创建。"""
         self._log("步骤5: 命中 about_you，提交姓名和生日完成注册")
+        self._log(
+            "about_you 参数: "
+            f"first_name={'已设置' if str(first_name or '').strip() else '缺失'}, "
+            f"last_name={'已设置' if str(last_name or '').strip() else '缺失'}, "
+            f"birthdate={str(birthdate or '').strip() or '缺失'}"
+        )
 
         full_name = f"{str(first_name or '').strip()} {str(last_name or '').strip()}".strip()
         if not full_name or not str(birthdate or "").strip():
@@ -773,6 +779,7 @@ class OAuthClient:
             "name": full_name,
             "birthdate": str(birthdate).strip(),
         }
+        self._log("about_you 请求体已构建，准备 POST /api/accounts/create_account")
 
         try:
             kwargs = {
@@ -860,6 +867,12 @@ class OAuthClient:
             "开始 OAuth 登录流程..."
             + (f" (source={login_source})" if login_source else "")
         )
+        self._log(
+            "OAuth 策略: "
+            f"prefer_passwordless_login={'on' if prefer_passwordless_login else 'off'}, "
+            f"allow_phone_verification={'on' if allow_phone_verification else 'off'}, "
+            f"complete_about_you_if_needed={'on' if complete_about_you_if_needed else 'off'}"
+        )
 
         code_verifier, code_challenge = generate_pkce()
         oauth_state = secrets.token_urlsafe(32)
@@ -917,6 +930,7 @@ class OAuthClient:
 
         for step in range(20):
             self.last_state = state
+            self._log(f"状态步进[{step + 1}/20]: {describe_flow_state(state)}")
             signature = self._state_signature(state)
             seen_states[signature] = seen_states.get(signature, 0) + 1
             if seen_states[signature] > 2:
@@ -1019,6 +1033,7 @@ class OAuthClient:
                 continue
 
             if complete_about_you_if_needed and self._state_is_about_you(state):
+                self._log("步骤5: 命中 about_you，执行 interrupt 新链路的资料补全提交")
                 next_state = self._submit_about_you_create_account(
                     first_name,
                     last_name,

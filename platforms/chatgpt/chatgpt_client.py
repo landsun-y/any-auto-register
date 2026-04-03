@@ -849,6 +849,11 @@ class ChatGPTClient:
         """
         from urllib.parse import urlparse
 
+        self._log(
+            "注册状态机参数: "
+            f"stop_before_about_you_submission={'on' if stop_before_about_you_submission else 'off'}"
+        )
+
         max_auth_attempts = 3
         final_url = ""
         final_path = ""
@@ -910,6 +915,10 @@ class ChatGPTClient:
         for _ in range(12):
             signature = self._state_signature(state)
             seen_states[signature] = seen_states.get(signature, 0) + 1
+            self._log(
+                f"注册状态推进: step={sum(seen_states.values())} "
+                f"state={describe_flow_state(state)} seen={seen_states[signature]}"
+            )
             if seen_states[signature] > 2:
                 return False, f"注册状态卡住: {describe_flow_state(state)}"
 
@@ -948,7 +957,10 @@ class ChatGPTClient:
             if self._state_is_about_you(state):
                 if stop_before_about_you_submission:
                     self.last_registration_state = state
-                    self._log("注册链路已到 about_you，按 interrupt 流程停止，交由 OAuth 会话完成资料提交")
+                    self._log(
+                        "注册链路已到 about_you，按 interrupt 流程停止。"
+                        "下一步交由 OAuth 新会话提交姓名+生日。"
+                    )
                     return True, "pending_about_you_submission"
                 if account_created:
                     return False, "填写信息阶段重复进入"

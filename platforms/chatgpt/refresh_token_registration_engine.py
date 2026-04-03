@@ -354,6 +354,7 @@ class RefreshTokenRegistrationEngine:
                     self._log(f"邮箱: {result.email}")
                     self._log(f"密码: {self.password}")
                     self._log(f"注册信息: {first_name} {last_name}, 生日: {birthdate}")
+                    self._log("流程策略: 注册阶段到 about_you 即停，改由 OAuth 新会话补全资料")
 
                     email_adapter = EmailServiceAdapter(
                         self.email_service,
@@ -362,7 +363,7 @@ class RefreshTokenRegistrationEngine:
                     )
 
                     register_client = self._build_chatgpt_client()
-                    self._log("2. 执行注册状态机，严格推进到注册链路终点...")
+                    self._log("2. 执行注册状态机（interrupt 模式：不在注册阶段提交 about_you）...")
                     registered, registration_message = register_client.register_complete_flow(
                         result.email,
                         self.password,
@@ -390,12 +391,16 @@ class RefreshTokenRegistrationEngine:
                         self._log(f"切换原因: {registration_message}")
                     else:
                         if registration_message == "pending_about_you_submission":
-                            self._log("注册状态机已推进至 about_you，按 interrupt 新链路改由 OAuth 会话提交资料")
+                            self._log("注册状态机已推进至 about_you，符合预期。下一步进入 OAuth 会话补全资料")
                         else:
-                            self._log("注册状态机已完成，进入全新 OAuth session 获取 workspace / RT")
+                            self._log(
+                                "注册状态机返回成功但未停在 about_you。"
+                                "将继续进入 OAuth 会话，按状态机实际返回推进。"
+                            )
 
                     oauth_client = self._build_oauth_client()
                     self._log("3. 新开 OAuth session，按 screen_hint=login + passwordless OTP 登录...")
+                    self._log("4. 若命中 about_you，则在 OAuth 会话内提交姓名+生日，再继续 workspace/token")
                     tokens = oauth_client.login_and_get_tokens(
                         result.email,
                         self.password,
@@ -433,7 +438,7 @@ class RefreshTokenRegistrationEngine:
                         register_client=register_client,
                     )
 
-                    self._log("4. 主链路完成")
+                    self._log("5. 主链路完成")
                     self._log(f"Account ID: {result.account_id}")
                     self._log(f"Workspace ID: {result.workspace_id}")
                     self._log("=" * 60)
