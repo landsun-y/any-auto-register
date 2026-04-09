@@ -34,6 +34,7 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
     { label: 'MoeMail (sall.cc)', value: 'moemail' },
     { label: 'YYDS Mail / MaliAPI', value: 'maliapi' },
     { label: 'GPTMail', value: 'gptmail' },
+    { label: 'VMail（虚拟临时邮箱）', value: 'vmail' },
     { label: 'OpenTrashMail', value: 'opentrashmail' },
     { label: 'Freemail（自建 CF Worker）', value: 'freemail' },
     { label: 'CF Worker（自建域名）', value: 'cfworker' },
@@ -186,6 +187,15 @@ const TAB_ITEMS = [
           { key: 'gptmail_base_url', label: 'API URL', placeholder: 'https://mail.chatgpt.org.uk' },
           { key: 'gptmail_api_key', label: 'API Key', secret: true, placeholder: 'gpt-test' },
           { key: 'gptmail_domain', label: '邮箱域名（可选）', placeholder: 'example.com' },
+        ],
+      },
+      {
+        title: 'VMail',
+        desc: '虚拟临时邮箱服务，自动生成随机前缀；支持多域名逗号分隔，每次随机选取',
+        fields: [
+          { key: 'vmail_api_url', label: 'API 地址', placeholder: 'https://vmail.dev' },
+          { key: 'vmail_api_key', label: 'API Key', secret: true },
+          { key: 'vmail_domains', label: '域名列表（逗号分隔）', placeholder: 'example.com,test.org' },
         ],
       },
       {
@@ -425,6 +435,7 @@ const MAILBOX_SECTION_FIELD_KEY_BY_PROVIDER: Record<string, string> = {
   microsoft: 'outlook_backend',
   applemail: 'applemail_base_url',
   gptmail: 'gptmail_base_url',
+  vmail: 'vmail_api_url',
   opentrashmail: 'opentrashmail_api_url',
   duckmail: 'duckmail_api_url',
   cfworker: 'cfworker_api_url',

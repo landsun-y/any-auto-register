@@ -291,6 +291,13 @@ def create_mailbox(
             domain=extra.get("gptmail_domain", ""),
             proxy=proxy,
         )
+    elif provider == "vmail":
+        return VMailMailbox(
+            api_url=extra.get("vmail_api_url", "https://vmail.dev"),
+            api_key=extra.get("vmail_api_key", ""),
+            domains=extra.get("vmail_domains", ""),
+            proxy=proxy,
+        )
     elif provider == "applemail":
         return AppleMailMailbox(
             api_url=extra.get("applemail_base_url", "https://www.appleemail.top"),
@@ -1994,6 +2001,198 @@ class GPTMailMailbox(BaseMailbox):
                         continue
                     if code:
                         self._log(f"[GPTMail] 收到验证码: {code}")
+                        return code
+            except Exception:
+                pass
+            return None
+
+        return self._run_polling_wait(
+            timeout=timeout,
+            poll_interval=3,
+            poll_once=poll_once,
+        )
+
+
+class VMailMailbox(BaseMailbox):
+    """VMail 虚拟临时邮箱服务 (https://vmail.dev)"""
+
+    def __init__(
+        self,
+        api_url: str = "https://vmail.dev",
+        api_key: str = "",
+        domains: str = "",
+        proxy: str = None,
+    ):
+        base = (api_url or "https://vmail.dev").rstrip("/")
+        if not base.endswith("/api/v1"):
+            base = f"{base}/api/v1"
+        self.api = base
+        self.api_key = str(api_key or "").strip()
+        self.domains = self._parse_domains(domains)
+        self.proxy = build_requests_proxy_config(proxy)
+        self._mailbox_id = None
+
+    @staticmethod
+    def _parse_domains(value: Any) -> list[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return []
+        return [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()]
+
+    @staticmethod
+    def _generate_local_part() -> str:
+        import string
+
+        prefix = "".join(random.choices(string.ascii_lowercase, k=6))
+        suffix = "".join(random.choices(string.digits, k=4))
+        return f"{prefix}{suffix}"
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        timeout: int = 15,
+    ) -> Any:
+        import requests
+
+        url = f"{self.api}{path}"
+        response = requests.request(
+            method,
+            url,
+            params=params,
+            json=json_body,
+            headers=self._headers(),
+            proxies=self.proxy,
+            timeout=timeout,
+        )
+        try:
+            payload = response.json()
+        except Exception as exc:
+            preview = (response.text or "")[:200]
+            raise RuntimeError(
+                f"VMail API {path} 返回非 JSON: HTTP {response.status_code} {preview}"
+            ) from exc
+
+        if response.status_code >= 400:
+            err = payload.get("error", {}) if isinstance(payload, dict) else {}
+            message = str(
+                err.get("message") or err.get("code") or response.text or f"HTTP {response.status_code}"
+            ).strip()
+            raise RuntimeError(f"VMail API {path} 失败: {message}")
+
+        if isinstance(payload, dict) and "data" in payload:
+            return payload["data"]
+        return payload
+
+    def get_email(self) -> MailboxAccount:
+        local_part = self._generate_local_part()
+        body: dict[str, Any] = {"localPart": local_part}
+        if self.domains:
+            domain = random.choice(self.domains)
+            body["domain"] = domain
+
+        data = self._request_json("POST", "/mailboxes", json_body=body)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"VMail 创建邮箱返回异常: {data}")
+
+        mailbox_id = str(data.get("id") or "").strip()
+        address = str(data.get("address") or "").strip()
+        if not mailbox_id or not address:
+            raise RuntimeError(f"VMail 创建邮箱返回数据不完整: {data}")
+
+        self._mailbox_id = mailbox_id
+        self._log(f"[VMail] 创建邮箱: {address} (id={mailbox_id})")
+        return MailboxAccount(
+            email=address,
+            account_id=mailbox_id,
+            extra={"provider": "vmail", "domain": data.get("domain", "")},
+        )
+
+    def get_current_ids(self, account: MailboxAccount) -> set:
+        try:
+            data = self._request_json(
+                "GET", f"/mailboxes/{account.account_id}/messages", timeout=10
+            )
+            messages = data if isinstance(data, list) else (data.get("data") if isinstance(data, dict) else [])
+            return {
+                str(msg.get("id"))
+                for msg in (messages or [])
+                if isinstance(msg, dict) and msg.get("id") is not None
+            }
+        except Exception:
+            return set()
+
+    def wait_for_code(
+        self,
+        account: MailboxAccount,
+        keyword: str = "",
+        timeout: int = 120,
+        before_ids: set = None,
+        code_pattern: str = None,
+        **kwargs,
+    ) -> str:
+        import re
+
+        seen = {str(mid) for mid in (before_ids or set())}
+        exclude_codes = {
+            str(code) for code in (kwargs.get("exclude_codes") or set()) if code
+        }
+
+        def poll_once() -> Optional[str]:
+            try:
+                data = self._request_json(
+                    "GET", f"/mailboxes/{account.account_id}/messages", timeout=10
+                )
+                messages = data if isinstance(data, list) else (data.get("data") if isinstance(data, dict) else [])
+                for msg in (messages or []):
+                    if not isinstance(msg, dict):
+                        continue
+                    msg_id = str(msg.get("id") or "").strip()
+                    if not msg_id or msg_id in seen:
+                        continue
+                    seen.add(msg_id)
+
+                    try:
+                        detail = self._request_json(
+                            "GET",
+                            f"/mailboxes/{account.account_id}/messages/{msg_id}",
+                            timeout=10,
+                        )
+                    except Exception:
+                        detail = {}
+
+                    search_text = " ".join(
+                        [
+                            str(msg.get("subject") or ""),
+                            str(msg.get("preview") or ""),
+                            str(detail.get("subject") or ""),
+                            str(detail.get("text") or ""),
+                            str(detail.get("html") or ""),
+                        ]
+                    ).strip()
+                    search_text = self._decode_raw_content(search_text) or search_text
+                    search_text = re.sub(
+                        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+                        "",
+                        search_text,
+                    )
+                    if keyword and keyword.lower() not in search_text.lower():
+                        continue
+
+                    code = self._safe_extract(search_text, code_pattern)
+                    if code and code in exclude_codes:
+                        continue
+                    if code:
+                        self._log(f"[VMail] 收到验证码: {code}")
                         return code
             except Exception:
                 pass
