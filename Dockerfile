@@ -38,6 +38,9 @@ COPY scripts/install_camoufox.py /tmp/install_camoufox.py
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
         libgtk-3-0 libx11-xcb1 libasound2 xvfb xauth \
+        libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
+        libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0 libatk-bridge2.0-0 \
+        libxkbcommon0 libdbus-1-3 dbus fonts-noto-cjk \
     && curl -fsSL https://go.dev/dl/go1.24.2.linux-amd64.tar.gz | tar -C /usr/local -xz \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
@@ -71,5 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends dos2unix git ip
 EXPOSE 8000 8889
 
 VOLUME ["/runtime", "/_ext_targets"]
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -sf http://127.0.0.1:8000/api/solver/status || exit 1
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
